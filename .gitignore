@@ -1,0 +1,19 @@
+# Node
+node_modules
+dist
+*.tsbuildinfo
+
+# debug
+npm-debug.log*
+
+# env files
+.env*
+!.env.example
+
+# Restate local server state
+.restate
+restate-data
+
+# local agent settings
+.claude/
+specs.md

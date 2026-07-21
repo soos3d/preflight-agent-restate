@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Preflight Agent</title>
+<style>
+  :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { max-width: 860px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; margin-bottom: 1rem; }
+  label { display: inline-block; margin: 0.3rem 0.8rem 0.3rem 0; font-size: 0.9rem; }
+  input, select { padding: 0.3rem; }
+  button { padding: 0.45rem 1rem; border-radius: 6px; cursor: pointer; }
+  .badge { display: inline-block; padding: 0.3rem 0.9rem; border-radius: 999px; font-weight: 700; color: #fff; }
+  .GO { background: #15803d; } .GO_WITH_CAUTION { background: #ca8a04; } .NO_GO { background: #b91c1c; }
+  table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+  th, td { border: 1px solid #8884; padding: 0.4rem 0.6rem; text-align: left; font-size: 0.9rem; }
+  .phase { font-family: ui-monospace, monospace; background: #8882; padding: 0.15rem 0.5rem; border-radius: 4px; }
+  .muted { opacity: 0.7; font-size: 0.85rem; }
+  .change { border-left: 4px solid #ca8a04; padding-left: 0.8rem; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #8884; font-size: 0.8rem; opacity: 0.75; }
+  #error { color: #b91c1c; }
+</style>
+</head>
+<body>
+<h1>Preflight Agent <span class="muted">— durable briefings on Restate + Claude</span></h1>
+
+<fieldset>
+  <legend>Request a briefing</legend>
+  <label>Briefing ID <input id="bid" size="12" /></label>
+  <label>Departure <input id="dep" value="KMCO" size="5" /></label>
+  <label>Destination <input id="dst" value="KJAX" size="5" /></label>
+  <label>Alternate <input id="alt" value="KDAB" size="5" /></label>
+  <label>ETD <input id="etd" type="datetime-local" /></label>
+  <label>Rules <select id="rules"><option>VFR</option><option>IFR</option></select></label>
+  <label>Aircraft <input id="acft" value="PA-28" size="8" /></label>
+  <button id="submit">Request briefing</button>
+  <button id="watch">Watch existing ID</button>
+  <div id="error"></div>
+</fieldset>
+
+<div id="status" hidden>
+  <p>Briefing <b id="cur-id"></b> — phase <span class="phase" id="phase"></span></p>
+  <div id="briefing" hidden>
+    <h2>Briefing <span id="rec" class="badge"></span></h2>
+    <p id="summary"></p>
+    <table id="hazards-table"><thead><tr><th>Hazard</th><th>Detail</th><th>Severity</th></tr></thead><tbody></tbody></table>
+    <p class="muted" id="reasoning"></p>
+    <button id="ack" hidden>Acknowledge briefing</button>
+  </div>
+  <div id="rebrief" hidden>
+    <h2>Re-brief (ETD − 1h) <span id="rerec" class="badge"></span></h2>
+    <div id="change" class="change" hidden><b>Conditions changed:</b> <span id="change-text"></span></div>
+    <p id="resummary"></p>
+    <button id="reack" hidden>Acknowledge re-brief</button>
+  </div>
+</div>
+
+<footer>
+  Demo only — <b>not for actual flight operations. Always obtain an official weather briefing</b>
+  (1800wxbrief.com / Flight Service). Weather data: aviationweather.gov. Briefing text: Claude.
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentId = null;
+let timer = null;
+
+$("bid").value = "brief-" + Math.random().toString(36).slice(2, 7);
+const inHour = new Date(Date.now() + 70 * 60 * 1000);
+inHour.setSeconds(0, 0);
+$("etd").value = new Date(inHour.getTime() - inHour.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+async function call(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await res.text();
+  if (!res.ok && res.status !== 409) throw new Error(text || res.statusText);
+  return text ? JSON.parse(text) : null;
+}
+
+$("submit").onclick = async () => {
+  $("error").textContent = "";
+  try {
+    const id = $("bid").value.trim();
+    const body = {
+      departure: $("dep").value.trim().toUpperCase(),
+      destination: $("dst").value.trim().toUpperCase(),
+      etdIso: new Date($("etd").value).toISOString(),
+      flightRules: $("rules").value,
+    };
+    if ($("alt").value.trim()) body.alternate = $("alt").value.trim().toUpperCase();
+    if ($("acft").value.trim()) body.aircraft = $("acft").value.trim();
+    await call(`/restate/send/briefing/${id}/run`, body);  // fire-and-forget submit
+    startWatching(id);
+  } catch (err) { $("error").textContent = String(err); }
+};
+
+$("watch").onclick = () => startWatching($("bid").value.trim());
+$("ack").onclick = () => call(`/restate/call/briefing/${currentId}/ack`);
+$("reack").onclick = () => call(`/restate/call/briefing/${currentId}/reAck`);
+
+function startWatching(id) {
+  currentId = id;
+  $("cur-id").textContent = id;
+  $("status").hidden = false;
+  clearInterval(timer);
+  poll();
+  timer = setInterval(poll, 3000);
+}
+
+async function poll() {
+  try {
+    const s = await call(`/restate/call/briefing/${currentId}/getStatus`);
+    if (!s) return;
+    $("phase").textContent = s.phase ?? "(not started)";
+    if (s.briefing) {
+      $("briefing").hidden = false;
+      renderBriefing(s.briefing, "rec", "summary", "reasoning");
+      $("ack").hidden = s.phase !== "AWAITING_ACK";
+    }
+    if (s.rebrief) {
+      $("rebrief").hidden = false;
+      $("rerec").textContent = s.rebrief.recommendation;
+      $("rerec").className = "badge " + s.rebrief.recommendation;
+      $("resummary").textContent = s.rebrief.summary;
+      $("change").hidden = !s.rebrief.changed;
+      $("change-text").textContent = s.rebrief.changeSummary;
+      $("reack").hidden = s.phase !== "AWAITING_REACK";
+    }
+    if (s.phase === "RE_ACKNOWLEDGED" || s.phase === "UNCHANGED_CONFIRMED") clearInterval(timer);
+  } catch (err) { $("error").textContent = String(err); }
+}
+
+function renderBriefing(b, recId, sumId, whyId) {
+  $(recId).textContent = b.recommendation;
+  $(recId).className = "badge " + b.recommendation;
+  $(sumId).textContent = b.summary;
+  $(whyId).textContent = b.reasoning;
+  const tbody = $("hazards-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  for (const h of b.hazards) {
+    const row = tbody.insertRow();
+    row.insertCell().textContent = h.type;
+    row.insertCell().textContent = h.detail;
+    row.insertCell().textContent = h.severity;
+  }
+}
+</script>
+</body>
+</html>
