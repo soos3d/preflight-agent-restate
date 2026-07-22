@@ -49,8 +49,8 @@ Prerequisites: Node 22+ and an [Anthropic API key](https://console.anthropic.com
 **1. Clone and configure:**
 
 ```shell
-git clone https://github.com/soos3d/preflight-agent
-cd preflight-agent
+git clone https://github.com/soos3d/preflight-agent-restate
+cd preflight-agent-restate
 npm install
 cp .env.example .env   # put your ANTHROPIC_API_KEY in it
 ```
@@ -82,7 +82,9 @@ npx @restatedev/restate -y deployments register localhost:9080 --force
 # Restate server in Docker? use: ... register http://host.docker.internal:9080 --force
 ```
 
-**4. Request a briefing** (ETD ~90 minutes out, so you can watch the durable timer later):
+Registration is a **one-time step**, not part of the run loop: it tells the Restate server where the service is deployed and which handlers it exposes, and Restate persists that in its own metadata store. It survives restarts of the server, the service, or both — the recovery demo below depends on exactly that. You only register again when the service's public surface changes (handlers added or signatures changed); `--force` just overwrites the same deployment so local iteration stays a one-liner.
+
+**4. Request a briefing.** The briefing itself arrives in **seconds** — the departure time below is set ~90 minutes out only so the *re-brief* timer, which fires at ETD − 1h, comes due about 30 minutes after you acknowledge: close enough to watch, far enough to prove the timer is real.
 
 ```shell
 curl localhost:8080/restate/send/briefing/n123ab-kjax/run --json '{
@@ -97,14 +99,14 @@ curl localhost:8080/restate/send/briefing/n123ab-kjax/run --json '{
 
 **5. Watch it in the Restate UI** — open <http://localhost:9070> and click the invocation. You'll see the journal: five parallel weather fetches, one Claude call, and then the workflow **suspended** at a durable promise, consuming nothing while it waits for a human.
 
-Read the briefing, then acknowledge it:
+By the time you've opened the UI, `getStatus` already returns the full briefing — summary, hazards, GO/NO-GO. Read it, then acknowledge:
 
 ```shell
 curl localhost:8080/restate/call/briefing/n123ab-kjax/getStatus
 curl localhost:8080/restate/call/briefing/n123ab-kjax/ack
 ```
 
-After the ack, the workflow sleeps on a durable timer until ETD − 1h, re-fetches the weather, and either completes (`UNCHANGED_CONFIRMED`) or suspends again for `reAck` if conditions changed materially.
+After the ack, the workflow sleeps on a durable timer until ETD − 1h (~30 minutes away with the ETD above), re-fetches the weather, and either completes (`UNCHANGED_CONFIRMED`) or suspends again for `reAck` if conditions changed materially.
 
 **Optional pilot UI**: `npm run ui`, then open <http://localhost:3000> — briefing, GO/NO-GO badge, hazards table, and the Acknowledge buttons, no build step.
 
