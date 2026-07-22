@@ -1,3 +1,19 @@
+/**
+ * THE WHOLE DEMO IS THIS FILE.
+ *
+ * Every durable-execution pattern lives here, in the order the README walks
+ * them:
+ *   1. journaled side effects + parallel fan-out ....... fetchWeather()
+ *   2. journaled LLM call (never billed twice) ......... "claude briefing"
+ *   3. human-in-the-loop: suspend on a durable promise . "pilot-ack"
+ *   4. durable timer to ETD - 1h (survives restarts) ... ctx.sleep()
+ *   5. re-fetch + Claude diff vs the original .......... "claude re-brief"
+ *   6. queryable workflow state ........................ ctx.set / getStatus
+ *
+ * Everything imported below is ordinary non-Restate plumbing: the
+ * aviationweather.gov client (weather.ts), the Claude prompts and schemas
+ * (briefing.ts), and input validation (validation.ts).
+ */
 import * as restate from "@restatedev/restate-sdk";
 import { RestatePromise, TerminalError } from "@restatedev/restate-sdk";
 import {

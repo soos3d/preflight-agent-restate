@@ -17,3 +17,4 @@ restate-data
 # local agent settings
 .claude/
 specs.md
+plan.md
